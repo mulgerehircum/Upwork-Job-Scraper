@@ -124,6 +124,10 @@ function isFrameRemovedError(error: unknown): boolean {
 	return /Frame with ID \d+ was removed\.?/i.test(toErrorMessage(error));
 }
 
+function isNoTabError(error: unknown): boolean {
+	return /No tab with id:?\s*\d+/i.test(toErrorMessage(error));
+}
+
 async function resolveWindowIdForBackgroundTab(): Promise<number | undefined> {
 	try {
 		const lastFocused = await browser.windows.getLastFocused({
@@ -357,6 +361,14 @@ async function scrapeTarget(target: SearchTarget): Promise<ScrapeResult> {
 			};
 		}
 
+		if (/Tab was removed before loading completed/i.test(toErrorMessage(error))) {
+			return {
+				ok: false,
+				reason: "error",
+				error: "Tab removed before load",
+			};
+		}
+
 		if (/Chrome error page/i.test(toErrorMessage(error))) {
 			return {
 				ok: false,
@@ -370,6 +382,14 @@ async function scrapeTarget(target: SearchTarget): Promise<ScrapeResult> {
 				ok: false,
 				reason: "error",
 				error: "Frame was removed before script execution completed",
+			};
+		}
+
+		if (isNoTabError(error)) {
+			return {
+				ok: false,
+				reason: "error",
+				error: "Tab no longer exists",
 			};
 		}
 
@@ -533,6 +553,11 @@ async function processTargetResult(
 							targetUrl: target.searchUrl,
 							webhookErrorKind: webhookError.kind,
 							httpStatus: webhookError.httpStatus,
+							fingerprint: [
+								"webhook-delivery",
+								"jobs",
+								String(webhookError.kind),
+							],
 						},
 					);
 				}
@@ -548,14 +573,21 @@ async function processTargetResult(
 			await appendActivityLog("info", "Webhook delivered", target.searchUrl);
 		} catch (err) {
 			const webhookError = classifyWebhookError({ error: err });
-			captureContextException("background", err, {
-				operation: "processTargetResult-webhook",
-				stage: "webhook_delivery",
-				targetUrl: target.searchUrl,
-				webhookErrorKind: webhookError.kind,
-				httpStatus: webhookError.httpStatus,
-				normalizedMessage: webhookError.message,
-			});
+			if (webhookError.kind !== "failed_to_fetch") {
+				captureContextException("background", err, {
+					operation: "processTargetResult-webhook",
+					stage: "webhook_delivery",
+					targetUrl: target.searchUrl,
+					webhookErrorKind: webhookError.kind,
+					httpStatus: webhookError.httpStatus,
+					normalizedMessage: webhookError.message,
+					fingerprint: [
+						"webhook-delivery",
+						"jobs",
+						String(webhookError.kind),
+					],
+				});
+			}
 			console.error(
 				`[Upwork Scraper] Webhook delivery failed for ${target.searchUrl}:`,
 				err,
@@ -641,6 +673,11 @@ async function sendIssueWebhookIfNeeded(
 					reason: result.reason ?? "unknown",
 					webhookErrorKind: webhookError.kind,
 					httpStatus: webhookError.httpStatus,
+					fingerprint: [
+						"webhook-delivery",
+						"issue",
+						String(webhookError.kind),
+					],
 				});
 			}
 			await trackWebhookFailure(target, webhookError);
@@ -659,15 +696,22 @@ async function sendIssueWebhookIfNeeded(
 		);
 	} catch (err) {
 		const webhookError = classifyWebhookError({ error: err });
-		captureContextException("background", err, {
-			operation: "sendIssueWebhookIfNeeded",
-			stage: "webhook_delivery",
-			targetUrl: target.searchUrl,
-			reason: result.reason ?? "unknown",
-			webhookErrorKind: webhookError.kind,
-			httpStatus: webhookError.httpStatus,
-			normalizedMessage: webhookError.message,
-		});
+		if (webhookError.kind !== "failed_to_fetch") {
+			captureContextException("background", err, {
+				operation: "sendIssueWebhookIfNeeded",
+				stage: "webhook_delivery",
+				targetUrl: target.searchUrl,
+				reason: result.reason ?? "unknown",
+				webhookErrorKind: webhookError.kind,
+				httpStatus: webhookError.httpStatus,
+				normalizedMessage: webhookError.message,
+				fingerprint: [
+					"webhook-delivery",
+					"issue",
+					String(webhookError.kind),
+				],
+			});
+		}
 		console.error(
 			`[Upwork Scraper] Issue webhook failed for ${target.searchUrl}:`,
 			err,
@@ -719,12 +763,13 @@ async function scrapeTargetWithRetry(
 		!first.ok &&
 		first.reason === "error" &&
 		typeof first.error === "string" &&
-		/Tab load timeout/i.test(first.error);
+		(/Tab load timeout/i.test(first.error) ||
+			/Tab removed before load/i.test(first.error));
 
 	if (!shouldRetry) return first;
 
 	console.warn(
-		`[Upwork Scraper] Tab load timeout for ${target.searchUrl} — retrying once after ${TAB_TIMEOUT_RETRY_DELAY_MS}ms`,
+		`[Upwork Scraper] Transient tab failure (${first.error}) for ${target.searchUrl} — retrying once after ${TAB_TIMEOUT_RETRY_DELAY_MS}ms`,
 	);
 	await new Promise((r) => setTimeout(r, TAB_TIMEOUT_RETRY_DELAY_MS));
 	return scrapeTarget(target);

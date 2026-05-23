@@ -5,6 +5,7 @@ import {
 	makeFetchTransport,
 	Scope,
 } from "@sentry/browser";
+import { installIdStorage } from "./storage";
 
 type ContextName = "background" | "options" | "content";
 
@@ -93,7 +94,32 @@ export function initSentryContext(context: ContextName): boolean {
 	const scope = createScope(context);
 	if (!scope) return false;
 	scopeByContext.set(context, scope);
+	void attachInstallId(scope, context);
 	return true;
+}
+
+async function attachInstallId(
+	scope: Scope,
+	context: ContextName,
+): Promise<void> {
+	try {
+		let id = await installIdStorage.getValue();
+		if (!id) {
+			if (context !== "background") return;
+			id = generateInstallId();
+			await installIdStorage.setValue(id);
+		}
+		scope.setUser({ id });
+	} catch {
+		// Storage errors must not break Sentry init; user attribution is optional.
+	}
+}
+
+function generateInstallId(): string {
+	if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+		return crypto.randomUUID();
+	}
+	return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
 function getScope(context: ContextName): Scope | null {
@@ -118,12 +144,21 @@ function createEventScope(scope: Scope, meta?: Record<string, unknown>): Scope {
 	if (!meta) return eventScope;
 
 	for (const [key, value] of Object.entries(meta)) {
+		if (key === "fingerprint") continue;
 		eventScope.setExtra(key, value);
 	}
 
 	const stage = meta.stage;
 	if (typeof stage === "string" && stage.trim()) {
 		eventScope.setTag("stage", stage.trim());
+	}
+
+	const fingerprint = meta.fingerprint;
+	if (
+		Array.isArray(fingerprint) &&
+		fingerprint.every((part) => typeof part === "string")
+	) {
+		eventScope.setFingerprint(fingerprint as string[]);
 	}
 
 	return eventScope;
@@ -143,7 +178,7 @@ export function classifyWebhookError(args: {
 
 	if (args.error !== undefined) {
 		const message = toMessage(args.error);
-		if (/Failed to fetch/i.test(message)) {
+		if (/Failed to fetch|NetworkError when attempting to fetch/i.test(message)) {
 			return {
 				kind: "failed_to_fetch",
 				message,
