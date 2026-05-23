@@ -253,6 +253,13 @@ export const legacyV1MigrationAppliedStorage = storage.defineItem<boolean>(
   },
 );
 
+export const installIdStorage = storage.defineItem<string>(
+  'local:installId',
+  {
+    fallback: '',
+  },
+);
+
 export const ACTIVITY_LOG_MAX = 200;
 
 export async function appendActivityLog(

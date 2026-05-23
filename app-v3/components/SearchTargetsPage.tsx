@@ -126,15 +126,21 @@ function SearchTargetCard({
 			setTimeout(() => setTestStatus("idle"), res.ok ? 3000 : 4000);
 		} catch (err) {
 			const webhookError = classifyWebhookError({ error: err });
-			captureContextException("options", err, {
-				operation: "handleTestWebhook",
-				stage: "webhook_test",
-				targetName,
-				targetUrl: target.searchUrl,
-				webhookErrorKind: webhookError.kind,
-				httpStatus: webhookError.httpStatus,
-				normalizedMessage: webhookError.message,
-			});
+			if (webhookError.kind !== "failed_to_fetch") {
+				captureContextException("options", err, {
+					operation: "handleTestWebhook",
+					stage: "webhook_test",
+					targetName,
+					targetUrl: target.searchUrl,
+					webhookErrorKind: webhookError.kind,
+					httpStatus: webhookError.httpStatus,
+					normalizedMessage: webhookError.message,
+					fingerprint: [
+						"webhook-test",
+						String(webhookError.kind),
+					],
+				});
+			}
 			setTestStatus("error");
 			setTimeout(() => setTestStatus("idle"), 4000);
 		}
