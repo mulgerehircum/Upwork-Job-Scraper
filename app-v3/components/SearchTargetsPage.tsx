@@ -456,8 +456,8 @@ export function SearchTargetsPage({
 						id: crypto.randomUUID(),
 						name: `Target ${safeSearchTargets.length + 1}`,
 						searchUrl: "",
-						webhookEnabled: false,
-						webhookUrl: "",
+						webhookEnabled: true,
+						webhookUrl: "http://localhost:3847",
 						payloadMode: "v3",
 						legacyCompatibilityEligible: false,
 					};

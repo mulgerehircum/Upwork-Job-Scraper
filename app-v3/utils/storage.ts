@@ -5,8 +5,8 @@ function createDefaultSearchTarget(index: number): Settings['searchTargets'][num
     id: crypto.randomUUID(),
     name: `Target ${index + 1}`,
     searchUrl: '',
-    webhookEnabled: false,
-    webhookUrl: '',
+    webhookEnabled: true,
+    webhookUrl: 'http://localhost:3847',
     payloadMode: 'v3',
     legacyCompatibilityEligible: false,
   };
